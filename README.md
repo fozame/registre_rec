@@ -26,10 +26,38 @@ l'outil sur le réseau interne.
 
 ```bash
 cd recouvrement_app
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate      # sous Windows : venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+**Sur un serveur Debian/Ubuntu fraîchement installé**, ces deux erreurs sont
+fréquentes à cette étape :
+
+```
+The virtual environment was not created successfully because ensurepip is not
+available. ... apt install python3.10-venv
+Command 'pip' not found ...
+```
+
+Ce n'est pas un problème lié à l'outil : il manque simplement deux paquets
+système. Installez-les puis recommencez :
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv python3-pip
+rm -rf venv                     # supprime la tentative précédente, incomplète
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+(`python3.10-venv` ou `python3-venv` selon la version affichée par le message
+d'erreur de votre système — les deux s'installent pareil.) Une fois le
+venv activé (`source venv/bin/activate`), la commande `python` fonctionne
+normalement même si `python` n'existe pas au niveau du système : chaque venv
+crée son propre raccourci `python`.
 
 ## Lancement
 
@@ -99,10 +127,158 @@ donc `sudo`) — ou placez l'outil derrière un reverse proxy (nginx, IIS…) qu
 gère aussi le HTTPS, recommandé si l'outil doit un jour être accessible
 au-delà du strict réseau interne.
 
+## Déploiement permanent sur un serveur Linux (systemd)
+
+`python app.py` lancé simplement dans un terminal s'arrête dès que vous
+fermez ce terminal ou vous déconnectez du serveur (SSH). Pour que l'outil
+reste accessible en continu — y compris après un redémarrage du serveur —
+faites-le gérer par **systemd**, le gestionnaire de services standard sur
+Ubuntu/Debian/CentOS/RHEL. Une fois en place, plus besoin de le relancer à
+la main : il démarre tout seul avec le serveur.
+
+**1. Installer et vérifier que ça marche manuellement, une première fois :**
+
+```bash
+cd /chemin/vers/recouvrement_app     # là où vous avez chargé le code
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python app.py                         # Ctrl+C pour arrêter une fois vérifié
+```
+
+**2. Ouvrir le port dans le pare-feu du serveur** (sinon vos collègues ne
+pourront pas s'y connecter, même si l'outil tourne) :
+
+```bash
+# Ubuntu/Debian (ufw)
+sudo ufw allow 5000/tcp
+
+# CentOS/RHEL/Rocky (firewalld)
+sudo firewall-cmd --permanent --add-port=5000/tcp
+sudo firewall-cmd --reload
+```
+
+**3. Créer le service systemd** — `sudo nano /etc/systemd/system/recouvrement.service` :
+
+```ini
+[Unit]
+Description=Registre du Recouvrement
+After=network.target
+
+[Service]
+Type=simple
+User=www-recouvrement
+WorkingDirectory=/chemin/vers/recouvrement_app
+Environment="RECOUVREMENT_DB=/chemin/vers/recouvrement_app/recouvrement.db"
+ExecStart=/chemin/vers/recouvrement_app/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Adaptez `/chemin/vers/recouvrement_app` à l'emplacement réel sur votre
+serveur. `User=` : idéalement un compte dédié sans droits d'administration
+(`sudo useradd -r -s /usr/sbin/nologin www-recouvrement`, puis donnez-lui la
+propriété du dossier avec `chown -R www-recouvrement: /chemin/vers/recouvrement_app`)
+plutôt que `root` — l'outil n'a besoin d'aucun privilège particulier.
+
+**4. Activer et démarrer le service :**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable recouvrement.service   # démarre automatiquement au boot
+sudo systemctl start recouvrement.service
+sudo systemctl status recouvrement.service   # doit afficher "active (running)"
+```
+
+**5. Vérifier depuis un autre poste du réseau**, en ouvrant dans un
+navigateur `http://<adresse-ip-ou-nom-du-serveur>:5000` (voir la section
+précédente pour un nom au lieu de l'IP). Si ça ne charge pas : vérifiez le
+pare-feu (étape 2), et que le poste testeur est bien sur le même réseau
+interne.
+
+**Consulter les journaux / redémarrer après une mise à jour du code :**
+
+```bash
+sudo journalctl -u recouvrement.service -f      # suivre les journaux en direct
+sudo systemctl restart recouvrement.service     # après un git pull, par exemple
+```
+
+Note : le serveur intégré de Flask (utilisé ici) précise au démarrage qu'il
+n'est « pas destiné à la production ». Pour une petite équipe interne sur un
+réseau de confiance, c'est amplement suffisant et c'est ce qui a été testé.
+Si un jour l'équipe grandit beaucoup ou que des lenteurs apparaissent, on
+pourra remplacer `ExecStart` par un serveur WSGI de production (ex.
+`gunicorn -w 2 -b 0.0.0.0:5000 app:app`, à ajouter à `requirements.txt`)
+sans changer le reste du code.
+
+## Déploiement avec Docker (alternative à systemd)
+
+Un `Dockerfile` et un `docker-compose.yml` sont fournis avec le projet.
+C'est une **alternative** à la méthode systemd ci-dessus, pas une obligation
+— choisissez celle qui vous convient, les deux fonctionnent avec le même
+code. L'avantage de Docker : l'image embarque Python et toutes les
+dépendances, donc plus aucune dépendance à l'état du serveur (c'est
+exactement ce qui a posé problème avec `python3-venv` manquant) ; l'outil se
+comporte pareil sur n'importe quel serveur Linux qui a Docker installé.
+
+**1. Installer Docker sur le serveur, si ce n'est pas déjà fait :**
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-plugin
+sudo systemctl enable --now docker
+```
+
+**2. Construire l'image et démarrer le conteneur**, depuis le dossier du
+projet (celui qui contient `Dockerfile` et `docker-compose.yml`) :
+
+```bash
+cd /chemin/vers/recouvrement_app
+docker compose up -d --build
+```
+
+C'est tout — pas de `venv`, pas de `pip install` à faire à la main. Le
+conteneur redémarre automatiquement avec le serveur (`restart:
+unless-stopped` dans `docker-compose.yml`) et écoute sur le port 5000,
+exactement comme avec `python app.py`.
+
+**3. Où sont les données** : tout (`recouvrement.db`, `.secret_key`,
+`admin_initial_password.txt`) est stocké dans le dossier `data/` créé à
+côté de `docker-compose.yml`, monté dans le conteneur — donc conservé
+intact même si vous reconstruisez l'image. **C'est ce dossier `data/` qu'il
+faut sauvegarder**, comme `recouvrement.db` dans la méthode systemd.
+
+```bash
+cat data/admin_initial_password.txt      # récupérer le mot de passe admin initial
+```
+
+**4. Ouvrir le port dans le pare-feu** — identique à la méthode systemd :
+
+```bash
+sudo ufw allow 5000/tcp
+```
+
+**Commandes utiles au quotidien :**
+
+```bash
+docker compose logs -f              # suivre les journaux en direct
+docker compose restart              # redémarrer sans reconstruire
+docker compose up -d --build        # reconstruire et redémarrer, après un git pull
+docker compose down                 # arrêter (les données dans data/ sont conservées)
+```
+
+Pour changer le port exposé (ex. 8080 au lieu de 5000), modifiez la ligne
+`"5000:5000"` de `docker-compose.yml` en `"8080:5000"` — seul le premier
+nombre change, c'est le port vu depuis le réseau.
+
 ## Où sont les données
 
 Tout l'historique est stocké dans **un seul fichier** : `recouvrement.db`
-(créé automatiquement au premier lancement, à côté de `app.py`). C'est le
+(créé automatiquement au premier lancement, à côté de `app.py` — ou dans
+`data/recouvrement.db` avec la méthode Docker, voir ci-dessus). C'est le
 fichier à sauvegarder régulièrement — une simple copie suffit, aucune base de
 données séparée à installer.
 
@@ -294,6 +470,9 @@ recouvrement_app/
   storage.py                  base cumulative (SQLite) : fusion, statuts, requêtes, audit
   xlsx_export.py               génération des exports Excel (.xlsx) à la volée
   requirements.txt            dépendances Python
+  Dockerfile                  image Docker (déploiement alternatif — voir "Déploiement avec Docker")
+  docker-compose.yml          configuration du conteneur (port, volume de données)
+  .dockerignore                fichiers exclus de l'image Docker
   pages/
     index.html                page principale de l'application (protégée par connexion)
     login.html                page de connexion (publique)

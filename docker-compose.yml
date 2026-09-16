@@ -1,0 +1,16 @@
+services:
+  recouvrement:
+    build: .
+    image: registre-recouvrement:latest
+    container_name: registre_recouvrement
+    restart: unless-stopped
+    ports:
+      # Modifiez "5000:5000" en "8080:5000" par exemple pour changer le port
+      # exposé côté réseau, sans toucher au port interne du conteneur.
+      - "5000:5000"
+    volumes:
+      # Tout l'historique (recouvrement.db), la clé de session (.secret_key)
+      # et le mot de passe admin initial vivent dans ce dossier, en dehors
+      # du conteneur : un `docker compose up -d --build` après une mise à
+      # jour du code ne touche jamais à ces fichiers.
+      - ./data:/data

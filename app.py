@@ -455,5 +455,5 @@ def api_admin_audit_log():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("RECOUVREMENT_PORT", "5010"))
+    port = int(os.environ.get("RECOUVREMENT_PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
