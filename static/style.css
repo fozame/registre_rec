@@ -14,7 +14,11 @@
   --warn: #b3541e;
   --warn-soft: #fdf1e8;
   --danger: #b3261e;
-  --font: "Times New Roman", Times, Georgia, serif;
+  /* Police système sobre et lisible à l'écran (contrairement à Times New
+     Roman, pensée pour l'imprimé) : chaque OS utilise sa police système
+     par défaut, sans dépendance à Internet ni fichier à installer — rendu
+     cohérent sur les postes Windows/Mac de l'agence. */
+  --font: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: "Consolas", "Menlo", monospace;
 }
 
