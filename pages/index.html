@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registre du Recouvrement</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner topbar-row">
+    <div class="brand">
+      <img src="/static/logo.png" alt="ART" class="brand-logo"
+           onerror="this.hidden=true; document.getElementById('brand-fallback').hidden=false;">
+      <span id="brand-fallback" class="brand-mark" hidden>ART</span>
+      <div>
+        <h1>Registre du Recouvrement</h1>
+        <p class="subtitle">Agence de Régulation des Télécommunications</p>
+        <p class="subtitle intro">Consolide, semaine après semaine, les paiements reçus des opérateurs et des banques dans une base unique — pour obtenir à tout moment le montant recouvré par période, par opérateur et par banque.</p>
+      </div>
+    </div>
+    <div class="topbar-user">
+      <span id="user-info" class="user-info"></span>
+      <button id="logout-btn" class="btn-secondary btn-logout">Se déconnecter</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="card" id="upload-card">
+    <h2>Importer un nouveau fichier hebdomadaire</h2>
+    <p class="hint">
+      Glissez-déposez le fichier Excel reçu de l'autre direction (feuille « TRAIT R »),
+      ou cliquez pour le sélectionner. L'outil compare automatiquement ce fichier avec
+      tout l'historique déjà enregistré : rien n'est jamais simplement remplacé.
+    </p>
+    <div id="dropzone" class="dropzone">
+      <input type="file" id="file-input" accept=".xlsx,.xlsm" hidden>
+      <div id="dropzone-idle">
+        <div class="dropzone-icon">⭱</div>
+        <div><strong>Déposez le fichier ici</strong> ou <span class="link">parcourir…</span></div>
+        <div class="hint small">.xlsx / .xlsm — feuille « TRAIT R »</div>
+      </div>
+      <div id="dropzone-busy" hidden>
+        <div class="spinner"></div>
+        <div>Analyse du fichier en cours…</div>
+      </div>
+    </div>
+    <div id="upload-result" class="upload-result" hidden></div>
+  </section>
+
+  <section class="card">
+    <div class="period-header">
+      <h2>Période</h2>
+      <div class="preset-buttons" id="preset-buttons">
+        <button data-preset="week">Cette semaine</button>
+        <button data-preset="month">Ce mois-ci</button>
+        <button data-preset="year">Exercice en cours</button>
+        <button data-preset="all">Tout l'historique</button>
+      </div>
+    </div>
+    <div class="custom-range">
+      <label>Du <input type="date" id="range-start"></label>
+      <label>au <input type="date" id="range-end"></label>
+      <button id="apply-range" class="btn-primary">Appliquer</button>
+      <span class="period-label" id="period-label"></span>
+    </div>
+    <div class="info-box">
+      <strong>Pourquoi les totaux peuvent différer selon la période choisie :</strong>
+      les montants se basent sur la <em>date réelle du paiement</em> (celle indiquée dans le fichier
+      source), jamais sur la date d'import. « Exercice en cours » ne compte donc que les paiements
+      datés dans l'année civile en cours ; « Tout l'historique » compte tous les paiements actifs,
+      y compris ceux dont la date est hors de l'exercice (souvent le signe d'une erreur de saisie —
+      voir le panneau « À vérifier » ci-dessous). Par ailleurs, le total d'une période déjà passée
+      (ex. une semaine du mois dernier) peut augmenter après coup si un import ultérieur révèle un
+      paiement tardif pour cette période : c'est normal, et c'est justement l'intérêt de la base
+      cumulative — mieux vaut toujours régénérer un chiffre à présenter depuis l'outil plutôt que
+      de réutiliser un total noté il y a plusieurs semaines.
+    </div>
+  </section>
+
+  <section class="kpi-grid">
+    <button type="button" class="kpi kpi-total kpi-clickable" data-categorie="">
+      <div class="kpi-label">Total recouvré — période</div>
+      <div class="kpi-value" id="kpi-total">—</div>
+      <div class="kpi-sub" id="kpi-count"></div>
+    </button>
+    <button type="button" class="kpi kpi-clickable" data-categorie="Orange">
+      <div class="kpi-label">Orange</div>
+      <div class="kpi-value" id="kpi-orange">—</div>
+      <div class="kpi-sub">Voir le détail ›</div>
+    </button>
+    <button type="button" class="kpi kpi-clickable" data-categorie="MTN">
+      <div class="kpi-label">MTN</div>
+      <div class="kpi-value" id="kpi-mtn">—</div>
+      <div class="kpi-sub">Voir le détail ›</div>
+    </button>
+    <button type="button" class="kpi kpi-clickable" data-categorie="Autre">
+      <div class="kpi-label">Autres opérateurs</div>
+      <div class="kpi-value" id="kpi-autre">—</div>
+      <div class="kpi-sub">Voir le détail ›</div>
+    </button>
+  </section>
+
+  <section class="two-col">
+    <div class="card">
+      <h2>Répartition par banque</h2>
+      <table class="table" id="banks-table">
+        <thead><tr><th>Banque</th><th class="num">Montant</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="anomalies-header">
+        <h2>À vérifier</h2>
+        <span class="badge" id="anomalies-count">0</span>
+        <a href="/api/export/anomalies.xlsx" class="btn-secondary btn-export" download>Exporter en Excel</a>
+      </div>
+      <p class="hint">
+        Ce panneau <strong>n'affiche pas tous les paiements</strong> — seulement ceux qui
+        nécessitent une vérification humaine : anomalies de saisie détectées automatiquement
+        (date mal tapée, colonne « Recouvrement » vide, ligne datée hors du bloc banque/mois
+        où elle se trouve…) et paiements actifs lors d'un import précédent mais absents du
+        dernier import reçu, en attente de confirmation avant d'être exclus. L'ensemble des
+        paiements se trouve dans le tableau « Détail des paiements » plus bas.
+      </p>
+      <div id="anomalies-list" class="anomalies-list"></div>
+    </div>
+  </section>
+
+  <section class="card" id="records-section">
+    <div class="anomalies-header">
+      <h2>Détail des paiements</h2>
+      <a href="/api/export/records.xlsx" id="export-records-link" class="btn-secondary btn-export" download>Exporter en Excel</a>
+    </div>
+    <div class="filters">
+      <input type="text" id="search-input" placeholder="Rechercher (société, libellé, n° facture)…">
+      <select id="filter-categorie">
+        <option value="">Toutes catégories</option>
+        <option value="Orange">Orange</option>
+        <option value="MTN">MTN</option>
+        <option value="Autre">Autres</option>
+      </select>
+      <select id="filter-banque"><option value="">Toutes banques</option></select>
+      <button id="apply-filters" class="btn-secondary">Filtrer</button>
+    </div>
+    <div class="table-scroll">
+      <table class="table" id="records-table">
+        <thead>
+          <tr>
+            <th>Date</th><th>Exploitant / Raison sociale</th><th>Libellé</th><th>Banque</th>
+            <th>N° facture</th><th>Catégorie</th><th class="num">Montant recouvré</th><th>Statut</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="hint small" id="records-note"></p>
+  </section>
+
+  <section class="card">
+    <h2>Journal des imports</h2>
+    <table class="table" id="uploads-table">
+      <thead>
+        <tr>
+          <th>Fichier</th><th>Importé le</th><th>Lignes analysées</th>
+          <th>Nouveaux</th><th>Déjà connus</th><th>Disparus signalés</th><th>À vérifier</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card admin-only" id="admin-section" hidden>
+    <h2>Administration</h2>
+    <p class="hint">
+      Cette section n'est visible que par les comptes administrateurs.
+    </p>
+
+    <div class="admin-grid">
+      <div class="admin-block">
+        <h3>Comptes utilisateurs</h3>
+        <table class="table" id="users-table">
+          <thead>
+            <tr><th>Nom d'utilisateur</th><th>Rôle</th><th>Créé le</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <form id="create-user-form" class="inline-form">
+          <input type="text" id="new-username" placeholder="Nom d'utilisateur" required>
+          <input type="password" id="new-password" placeholder="Mot de passe (8 car. min.)" required minlength="8">
+          <select id="new-role">
+            <option value="user">Utilisateur</option>
+            <option value="admin">Administrateur</option>
+          </select>
+          <button type="submit" class="btn-primary">Créer le compte</button>
+        </form>
+        <p id="user-form-error" class="error-text" hidden></p>
+      </div>
+
+      <div class="admin-block">
+        <h3>Journal d'audit</h3>
+        <p class="hint small">Actions sensibles : connexions administrateur, gestion des comptes, réinitialisation de la base.</p>
+        <div class="table-scroll" style="max-height:260px;">
+          <table class="table" id="audit-table">
+            <thead><tr><th>Date</th><th>Acteur</th><th>Action</th><th>Détail</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="danger-zone">
+      <h3>Zone sensible — Réinitialiser la base de données</h3>
+      <p class="hint">
+        Efface <strong>définitivement</strong> tous les paiements et tout le journal des imports,
+        afin de pouvoir tout reconstituer proprement en réimportant les fichiers Excel depuis le
+        début. Les comptes utilisateurs et le journal d'audit sont conservés. Cette action est
+        irréversible : assurez-vous d'avoir une copie de sauvegarde de <code>recouvrement.db</code>
+        si un doute existe.
+      </p>
+      <button id="open-reset-modal" class="btn-danger">Réinitialiser la base de données…</button>
+    </div>
+  </section>
+
+</main>
+
+<div id="modal-backdrop" class="modal-backdrop" hidden>
+  <div class="modal">
+    <h3>Confirmer l'annulation</h3>
+    <p id="modal-record-info" class="hint"></p>
+    <label for="modal-motif">Motif (obligatoire) :</label>
+    <textarea id="modal-motif" rows="3" placeholder="Ex. correction du nom du payeur par l'autre direction, cf. lignes REALTIME INTERNATIONAL SARL du 18/08…"></textarea>
+    <label for="modal-agent">Votre nom :</label>
+    <input type="text" id="modal-agent" placeholder="Nom de l'agent">
+    <div class="modal-actions">
+      <button id="modal-cancel" class="btn-secondary">Annuler</button>
+      <button id="modal-confirm" class="btn-primary">Confirmer l'annulation</button>
+    </div>
+    <p id="modal-error" class="error-text" hidden></p>
+  </div>
+</div>
+
+<div id="reset-modal-backdrop" class="modal-backdrop" hidden>
+  <div class="modal">
+    <h3>Réinitialiser la base de données</h3>
+    <p class="hint">
+      Cette action efface définitivement tous les paiements et le journal des imports. Pour
+      confirmer, remplissez les trois champs ci-dessous.
+    </p>
+    <label for="reset-motif">Motif (obligatoire) :</label>
+    <textarea id="reset-motif" rows="2" placeholder="Ex. reconstitution complète suite à correction du fichier source de janvier…"></textarea>
+    <label for="reset-phrase">Tapez exactement <code>REINITIALISER LA BASE</code> pour confirmer :</label>
+    <input type="text" id="reset-phrase" placeholder="REINITIALISER LA BASE">
+    <label for="reset-password">Votre mot de passe :</label>
+    <input type="password" id="reset-password">
+    <div class="modal-actions">
+      <button id="reset-modal-cancel" class="btn-secondary">Annuler</button>
+      <button id="reset-modal-confirm" class="btn-danger">Effacer toute la base</button>
+    </div>
+    <p id="reset-modal-error" class="error-text" hidden></p>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
