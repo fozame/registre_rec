@@ -17,7 +17,7 @@
       <div>
         <h1>Registre du Recouvrement</h1>
         <p class="subtitle">Agence de Régulation des Télécommunications</p>
-        <p class="subtitle intro">Consolide, semaine après semaine, les paiements reçus des opérateurs et des banques dans une base unique — pour obtenir à tout moment le montant recouvré par période, par opérateur et par banque.</p>
+        <p class="subtitle intro">Consolide, semaine après semaine, les paiements reçus des opérateurs et des banques dans une base unique — pour obtenir à tout moment le montant recouvré par période, par opérateur et par banque, suivre ce qui change d'un fichier à l'autre et rapprocher les paiements sans facture.</p>
       </div>
     </div>
     <div class="topbar-user">
@@ -131,6 +131,51 @@
     </div>
   </section>
 
+
+  <section class="card" id="rapprochement-section">
+    <div class="anomalies-header">
+      <h2>Rapprochement &amp; modifications entre fichiers</h2>
+      <a href="/api/export/bd_finale.xlsx" id="export-bd-link" class="btn-primary btn-export" download>Exporter la BD finale (Excel)</a>
+    </div>
+    <p class="hint">
+      En compilant les fichiers successifs, l'outil repère : les lignes <strong>corrigées</strong> d'un
+      fichier à l'autre (facture ajoutée, payeur précisé, paiement ventilé sur plusieurs factures…),
+      les paiements <strong>sans facture</strong> qui ont un équivalent <strong>avec facture</strong>
+      (même exploitant, même montant) et les <strong>n° de facture mal attachés</strong>. Les cas de
+      confiance forte sont appliqués automatiquement ; les autres attendent votre validation ici.
+      La BD finale exportée contient tous les paiements, leur statut, leur facture retenue,
+      les fichiers d'où ils viennent et tout leur historique.
+    </p>
+    <div class="filters">
+      <select id="rap-exploitant"><option value="">Tous les exploitants</option></select>
+    </div>
+    <div class="rap-chips" id="rap-chips"></div>
+
+    <div class="rap-grid">
+      <div>
+        <h3 class="rap-h3">Lignes corrigées à valider <span class="badge" id="rap-mod-count">0</span></h3>
+        <div id="rap-mods" class="anomalies-list rap-list"></div>
+      </div>
+      <div>
+        <h3 class="rap-h3">Rapprochements proposés <span class="badge" id="rap-rap-count">0</span></h3>
+        <div id="rap-raps" class="anomalies-list rap-list"></div>
+      </div>
+    </div>
+
+    <h3 class="rap-h3">Factures suspectes <span class="badge" id="rap-fs-count">0</span></h3>
+    <div class="table-scroll" style="max-height:300px;">
+      <table class="table" id="rap-fs-table">
+        <thead><tr><th>Gravité</th><th>Type</th><th>N° facture</th><th>Détail</th><th>Paiements</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <details class="rap-details">
+      <summary>Décisions déjà prises (<span id="rap-dec-count">0</span>) — appliquées automatiquement ou validées</summary>
+      <div id="rap-decisions" class="anomalies-list rap-list"></div>
+    </details>
+  </section>
+
   <section class="card" id="records-section">
     <div class="anomalies-header">
       <h2>Détail des paiements</h2>
@@ -145,6 +190,8 @@
         <option value="Autre">Autres</option>
       </select>
       <select id="filter-banque"><option value="">Toutes banques</option></select>
+      <select id="filter-exploitant"><option value="">Tous les exploitants</option></select>
+      <label class="check"><input type="checkbox" id="filter-sans-facture"> Sans facture uniquement</label>
       <button id="apply-filters" class="btn-secondary">Filtrer</button>
     </div>
     <div class="table-scroll">
@@ -166,8 +213,9 @@
     <table class="table" id="uploads-table">
       <thead>
         <tr>
-          <th>Fichier</th><th>Importé le</th><th>Lignes analysées</th>
-          <th>Nouveaux</th><th>Déjà connus</th><th>Disparus signalés</th><th>À vérifier</th>
+          <th>Fichier</th><th>Importé le</th><th>Fichier modifié le</th><th>Données du … au …</th>
+          <th>Lignes analysées</th><th>Nouveaux</th><th>Déjà connus</th><th>Disparus signalés</th>
+          <th>Corrections auto.</th><th>À vérifier</th>
         </tr>
       </thead>
       <tbody></tbody>

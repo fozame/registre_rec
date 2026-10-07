@@ -38,7 +38,7 @@ from werkzeug.security import check_password_hash
 import auth
 import storage
 import xlsx_export
-from parser import parse_file
+from parser import parse_file, read_file_metadata
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("RECOUVREMENT_DB", os.path.join(BASE_DIR, "recouvrement.db"))
@@ -205,6 +205,7 @@ def api_upload():
             f.save(tmp.name)
             tmp_path = tmp.name
         df, sheet_name = parse_file(tmp_path, sheet=sheet)
+        file_meta = read_file_metadata(tmp_path)
     except Exception as exc:  # feuille manquante, fichier corrompu, etc.
         return jsonify(error=f"Impossible d'analyser ce fichier : {exc}"), 400
     finally:
@@ -218,7 +219,8 @@ def api_upload():
         )), 400
 
     with storage.connect(DB_PATH) as conn:
-        stats = storage.merge_upload(conn, f.filename, sheet_name, uploaded_at, uploaded_by, df)
+        stats = storage.merge_upload(conn, f.filename, sheet_name, uploaded_at,
+                                     uploaded_by, df, file_meta=file_meta)
         storage.log_action(conn, current_actor(), "import fichier", f.filename)
 
     return jsonify(stats)
@@ -255,6 +257,8 @@ def api_records():
             categorie=request.args.get("categorie") or None,
             banque=request.args.get("banque") or None,
             search=request.args.get("search") or None,
+            exploitant=request.args.get("exploitant") or None,
+            sans_facture=request.args.get("sans_facture") == "1",
         )
     return jsonify(rows)
 
@@ -298,6 +302,8 @@ def api_export_records():
             categorie=request.args.get("categorie") or None,
             banque=request.args.get("banque") or None,
             search=request.args.get("search") or None,
+            exploitant=request.args.get("exploitant") or None,
+            sans_facture=request.args.get("sans_facture") == "1",
             limit=None,
         )
     start = request.args.get("start") or "début"
@@ -331,6 +337,111 @@ def api_confirm_cancel():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     return jsonify(ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Rapprochement, modifications entre fichiers, factures suspectes
+# ---------------------------------------------------------------------------
+def _slim(r):
+    if r is None:
+        return None
+    return {k: r.get(k) for k in (
+        "key", "date", "raison_sociale", "libelle", "banque", "montant",
+        "recouvrement_utilise", "numero_facture", "status", "first_seen_upload",
+        "last_seen_upload", "sources", "exploitant_key", "facture_issue",
+        "facture_rapprochee")}
+
+
+def _slim_item(item):
+    out = {k: v for k, v in item.items() if k not in ("old", "new", "news", "records")}
+    if "old" in item:
+        out["old"] = _slim(item["old"])
+        out["news"] = [_slim(n) for n in item.get("news") or [item["new"]]]
+    if "records" in item:
+        out["records"] = [_slim(r) for r in item["records"]]
+    return out
+
+
+@app.route("/api/rapprochement")
+@login_required
+def api_rapprochement():
+    exploitant = request.args.get("exploitant") or None
+    with storage.connect(DB_PATH) as conn:
+        a = storage.analyse_rapprochement(conn, exploitant=exploitant)
+    return jsonify(
+        modifications=[_slim_item(m) for m in a["modifications"]],
+        rapprochements=[_slim_item(x) for x in a["rapprochements"]],
+        decisions=[_slim_item(d) for d in a["decisions"]],
+        factures_suspectes=[_slim_item(f) for f in a["factures_suspectes"]],
+        sans_facture={"count": len(a["sans_facture"]),
+                      "total": sum(r["recouvrement_utilise"] or 0 for r in a["sans_facture"])},
+    )
+
+
+@app.route("/api/exploitants")
+@login_required
+def api_exploitants():
+    with storage.connect(DB_PATH) as conn:
+        return jsonify(storage.rap.exploitants(storage._all_records(conn)))
+
+
+@app.route("/api/liens/valider", methods=["POST"])
+@login_required
+def api_valider_lien():
+    body = request.get_json(silent=True) or {}
+    try:
+        with storage.connect(DB_PATH) as conn:
+            storage.valider_lien(conn, body.get("type"), body.get("key_from"),
+                                 body.get("keys_to"), current_actor(),
+                                 mode=body.get("mode"), motif=body.get("motif"))
+            storage.log_action(conn, current_actor(), f"validation {body.get('type')}",
+                               f"{body.get('key_from')} -> {body.get('keys_to')}")
+    except KeyError as exc:
+        return jsonify(error=str(exc).strip("'\"")), 404
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(ok=True)
+
+
+@app.route("/api/liens/rejeter", methods=["POST"])
+@login_required
+def api_rejeter_lien():
+    body = request.get_json(silent=True) or {}
+    if body.get("type") not in ("modification", "rapprochement") or not body.get("key_from"):
+        return jsonify(error="Requête incomplète."), 400
+    with storage.connect(DB_PATH) as conn:
+        storage.rejeter_lien(conn, body["type"], body["key_from"], body.get("keys_to") or "",
+                             current_actor(), body.get("motif"))
+        storage.log_action(conn, current_actor(), f"rejet {body['type']}",
+                           f"{body['key_from']} -> {body.get('keys_to')}")
+    return jsonify(ok=True)
+
+
+@app.route("/api/liens/<int:lien_id>/annuler", methods=["POST"])
+@login_required
+def api_annuler_lien(lien_id):
+    body = request.get_json(silent=True) or {}
+    try:
+        with storage.connect(DB_PATH) as conn:
+            storage.annuler_lien(conn, lien_id, current_actor(), body.get("motif"))
+            storage.log_action(conn, current_actor(), "annulation décision", str(lien_id))
+    except KeyError as exc:
+        return jsonify(error=str(exc).strip("'\"")), 404
+    return jsonify(ok=True)
+
+
+@app.route("/api/export/bd_finale.xlsx")
+@login_required
+def api_export_bd_finale():
+    exploitant = request.args.get("exploitant") or None
+    with storage.connect(DB_PATH) as conn:
+        buf, nom = xlsx_export.build_bd_finale(conn, exploitant=exploitant)
+    suffix = "" if not nom else "_" + "".join(c if c.isalnum() else "_" for c in nom)[:40]
+    return send_file(
+        buf, as_attachment=True,
+        download_name=xlsx_export.export_filename("bd_finale_recouvrement" + suffix),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 # ---------------------------------------------------------------------------

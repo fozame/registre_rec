@@ -5,6 +5,10 @@
   const fmtFCFA = (n) => `${fmt.format(Math.round(n || 0))} FCFA`;
 
   let currentRange = { start: null, end: null };
+  const statusLabels = {
+    actif: "Actif", a_verifier_disparu: "À vérifier", annule_confirme: "Annulé (confirmé)",
+    remplace: "Remplacé (corrigé)", rapproche: "Rapproché",
+  };
   let currentUser = null; // { username, role }
 
   // ---------------------------------------------------------------------
@@ -184,6 +188,7 @@
     refreshAnomalies();
     refreshSummary();
     refreshRecords();
+    refreshRapprochement();
   });
 
   // ---------------------------------------------------------------------
@@ -199,12 +204,14 @@
     if (search) params.set("search", search);
     if (categorie) params.set("categorie", categorie);
     if (banque) params.set("banque", banque);
+    const exploitant = document.getElementById("filter-exploitant").value;
+    if (exploitant) params.set("exploitant", exploitant);
+    if (document.getElementById("filter-sans-facture").checked) params.set("sans_facture", "1");
 
     const res = await apiFetch(`/api/records?${params}`);
     const rows = await res.json();
     const tbody = document.querySelector("#records-table tbody");
     tbody.innerHTML = "";
-    const statusLabels = { actif: "Actif", a_verifier_disparu: "À vérifier", annule_confirme: "Annulé (confirmé)" };
     for (const r of rows) {
       const tr = document.createElement("tr");
       tr.innerHTML = `
@@ -212,7 +219,7 @@
         <td>${escapeHtml(r.raison_sociale)}</td>
         <td>${escapeHtml(r.libelle)}</td>
         <td>${escapeHtml(r.banque)}</td>
-        <td>${escapeHtml(r.numero_facture) || "—"}</td>
+        <td>${escapeHtml(r.numero_facture) || "—"}${r.facture_rapprochee ? `<br><span class="hint small">rapprochée : ${escapeHtml(r.facture_rapprochee)}</span>` : ""}${r.facture_issue ? `<br><span class="anomaly-reason">${escapeHtml(r.facture_issue)}</span>` : ""}</td>
         <td>${escapeHtml(r.categorie)}</td>
         <td class="num">${fmtFCFA(r.recouvrement_utilise)}</td>
         <td><span class="status-pill status-${r.status}">${statusLabels[r.status] || r.status}</span></td>
@@ -246,6 +253,148 @@
     });
   });
 
+
+  // ---------------------------------------------------------------------
+  // Rapprochement & modifications entre fichiers
+  // ---------------------------------------------------------------------
+  async function refreshExploitants() {
+    const res = await apiFetch("/api/exploitants");
+    const list = await res.json();
+    list.sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
+    for (const id of ["rap-exploitant", "filter-exploitant"]) {
+      const sel = document.getElementById(id);
+      const cur = sel.value;
+      sel.innerHTML = `<option value="">Tous les exploitants</option>` + list.map((e) =>
+        `<option value="${escapeHtml(e.key)}">${escapeHtml(e.nom)}` +
+        `${e.n_sans_facture ? ` — ${e.n_sans_facture} sans facture` : ""}` +
+        `${e.orthographes.length > 1 ? ` (${e.orthographes.length} orthographes)` : ""}</option>`).join("");
+      sel.value = cur;
+    }
+  }
+
+  function recLine(r, label, cls) {
+    if (!r) return "";
+    const fac = r.numero_facture ? `fact. <strong>${escapeHtml(r.numero_facture)}</strong>` : `<em>sans facture</em>`;
+    return `<div class="rap-line ${cls}"><span class="lbl">${label}</span>
+      ${escapeHtml(r.date)} · <strong>${escapeHtml(r.raison_sociale || "(sans nom)")}</strong> ·
+      ${fmtFCFA(r.montant)} · ${fac}<br>
+      <span class="hint small">${escapeHtml(r.libelle || "")} · ${escapeHtml(r.banque || "")} ·
+      ${statusLabels[r.status] || escapeHtml(r.status)} · vu dans : ${escapeHtml((r.sources || []).join(", "))}</span></div>`;
+  }
+
+  async function postLien(url, body) {
+    const res = await apiFetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { window.alert(data.error || "Erreur."); return false; }
+    refreshRapprochement(); refreshAnomalies(); refreshSummary(); refreshRecords(); refreshExploitants();
+    return true;
+  }
+
+  async function refreshRapprochement() {
+    const exploitant = document.getElementById("rap-exploitant").value;
+    const params = new URLSearchParams();
+    if (exploitant) params.set("exploitant", exploitant);
+    document.getElementById("export-bd-link").href = `/api/export/bd_finale.xlsx?${params}`;
+    const res = await apiFetch(`/api/rapprochement?${params}`);
+    const d = await res.json();
+
+    document.getElementById("rap-chips").innerHTML = `
+      <span class="rap-chip">Sans facture (comptés) : <strong>${d.sans_facture.count}</strong> — ${fmtFCFA(d.sans_facture.total)}</span>
+      <span class="rap-chip">Décisions prises : <strong>${d.decisions.length}</strong></span>`;
+
+    // --- lignes corrigées ---
+    document.getElementById("rap-mod-count").textContent = d.modifications.length;
+    const mods = document.getElementById("rap-mods");
+    mods.innerHTML = d.modifications.length ? "" : `<div class="empty-state">Aucune correction en attente. ✓</div>`;
+    d.modifications.forEach((m) => {
+      const div = document.createElement("div");
+      div.className = "anomaly-card";
+      div.innerHTML = `
+        <div class="row1"><span class="conf conf-${m.confiance}">Confiance ${m.confiance}</span>
+          <span class="hint small">${escapeHtml(m.regle)}</span></div>
+        <div class="rap-nature">${escapeHtml(m.nature)}</div>
+        ${recLine(m.old, "Ancienne version (disparue)", "old")}
+        ${m.news.map((n, i) => recLine(n, m.news.length > 1 ? `Nouvelle ligne ${i + 1}` : "Nouvelle version", "new")).join("")}
+        <div class="rap-actions">
+          <button class="ok">C'est la même opération corrigée</button>
+          <button class="no">Ce n'est pas la même</button>
+        </div>`;
+      const keys = m.news.map((n) => n.key);
+      div.querySelector(".ok").addEventListener("click", () =>
+        postLien("/api/liens/valider", { type: "modification", key_from: m.old.key, keys_to: keys }));
+      div.querySelector(".no").addEventListener("click", () =>
+        postLien("/api/liens/rejeter", { type: "modification", key_from: m.old.key, keys_to: keys }));
+      mods.appendChild(div);
+    });
+
+    // --- rapprochements ---
+    document.getElementById("rap-rap-count").textContent = d.rapprochements.length;
+    const raps = document.getElementById("rap-raps");
+    raps.innerHTML = d.rapprochements.length ? "" : `<div class="empty-state">Aucun rapprochement proposé.</div>`;
+    d.rapprochements.forEach((x) => {
+      const div = document.createElement("div");
+      div.className = "anomaly-card";
+      div.innerHTML = `
+        <div class="row1"><span class="conf conf-${x.confiance}">Confiance ${x.confiance}</span>
+          <span class="amount">${fmtFCFA(x.old.montant)}</span></div>
+        <div class="rap-nature">${escapeHtml(x.regle)}${x.autres_candidats ? ` — <strong>${x.autres_candidats}</strong> autre(s) paiement(s) avec facture possible(s)` : ""}</div>
+        ${recLine(x.old, "Paiement sans facture", "old")}
+        ${recLine(x.news[0], "Paiement avec facture", "new")}
+        <div class="rap-actions">
+          <button class="ok" data-mode="meme_paiement" title="La ligne sans facture n'est plus comptée (pas de double compte)">Même paiement</button>
+          <button class="ok" data-mode="facture_seule" title="Les deux lignes restent comptées ; la facture est rattachée à la ligne sans facture">Rattacher la facture seulement</button>
+          <button class="no">Rejeter</button>
+        </div>`;
+      div.querySelectorAll("button[data-mode]").forEach((b) => b.addEventListener("click", () =>
+        postLien("/api/liens/valider", { type: "rapprochement", key_from: x.old.key, keys_to: [x.news[0].key], mode: b.dataset.mode })));
+      div.querySelector(".no").addEventListener("click", () =>
+        postLien("/api/liens/rejeter", { type: "rapprochement", key_from: x.old.key, keys_to: [x.news[0].key] }));
+      raps.appendChild(div);
+    });
+
+    // --- factures suspectes ---
+    document.getElementById("rap-fs-count").textContent = d.factures_suspectes.length;
+    const tb = document.querySelector("#rap-fs-table tbody");
+    tb.innerHTML = d.factures_suspectes.length ? "" : `<tr><td colspan="5" class="empty-state">Rien à signaler.</td></tr>`;
+    d.factures_suspectes.forEach((f) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><span class="conf ${f.gravite === "à corriger" ? "conf-faible" : "conf-moyenne"}">${escapeHtml(f.gravite)}</span></td>
+        <td>${escapeHtml(f.type)}</td><td>${escapeHtml(f.numero_facture)}</td><td>${escapeHtml(f.detail)}</td>
+        <td class="hint small">${f.records.map((r) => `${escapeHtml(r.date)} · ${escapeHtml(r.raison_sociale)} · ${fmtFCFA(r.montant)}`).join("<br>")}</td>`;
+      tb.appendChild(tr);
+    });
+
+    // --- décisions prises ---
+    document.getElementById("rap-dec-count").textContent = d.decisions.length;
+    const dec = document.getElementById("rap-decisions");
+    dec.innerHTML = d.decisions.length ? "" : `<div class="empty-state">Aucune décision pour le moment.</div>`;
+    d.decisions.slice().reverse().forEach((l) => {
+      const div = document.createElement("div");
+      div.className = "anomaly-card";
+      const titre = l.type === "modification"
+        ? (l.decided_by === "automatique" ? "Correction appliquée automatiquement" : "Correction validée")
+        : (l.mode === "meme_paiement" ? "Rapprochement validé — même paiement" : "Rapprochement validé — facture rattachée");
+      div.innerHTML = `
+        <div class="row1"><strong>${titre}</strong>
+          <span class="hint small">${escapeHtml(l.decided_by || "")} · ${escapeHtml((l.decided_at || "").slice(0, 16).replace("T", " "))}</span></div>
+        <div class="rap-nature">${escapeHtml(l.nature || "")}</div>
+        ${recLine(l.old, l.type === "modification" ? "Ancienne version" : "Paiement sans facture", "old")}
+        ${l.news.map((n) => recLine(n, l.type === "modification" ? "Nouvelle version" : "Paiement avec facture", "new")).join("")}
+        <div class="rap-actions"><button class="no">Annuler cette décision</button></div>`;
+      div.querySelector(".no").addEventListener("click", () => {
+        if (!window.confirm("Annuler cette décision ? Les paiements retrouvent leur statut précédent.")) return;
+        postLien(`/api/liens/${l.id}/annuler`, {});
+      });
+      dec.appendChild(div);
+    });
+  }
+  document.getElementById("rap-exploitant").addEventListener("change", refreshRapprochement);
+  document.getElementById("filter-exploitant").addEventListener("change", refreshRecords);
+  document.getElementById("filter-sans-facture").addEventListener("change", refreshRecords);
+
   // ---------------------------------------------------------------------
   // Journal des imports
   // ---------------------------------------------------------------------
@@ -255,17 +404,20 @@
     const tbody = document.querySelector("#uploads-table tbody");
     tbody.innerHTML = "";
     if (rows.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" class="empty-state">Aucun import pour le moment.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="empty-state">Aucun import pour le moment.</td></tr>`;
     }
     for (const u of rows) {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${escapeHtml(u.filename)}</td>
+        <td>${escapeHtml(u.filename)}${u.avertissement ? `<div class="anomaly-reason">⚠ ${escapeHtml(u.avertissement)}</div>` : ""}</td>
         <td>${escapeHtml(u.uploaded_at)}</td>
+        <td>${escapeHtml(u.fichier_modifie_le || "inconnu")}</td>
+        <td>${u.periode_debut ? `${escapeHtml(u.periode_debut)} → ${escapeHtml(u.periode_fin)}` : `${escapeHtml(u.date_min || "")} → ${escapeHtml(u.date_max || "")}`}</td>
         <td class="num">${u.n_parsed}</td>
         <td class="num">${u.n_new}</td>
         <td class="num">${u.n_reconfirmed}</td>
         <td class="num">${u.n_missing_flagged}</td>
+        <td class="num">${u.n_modifications_auto ?? "—"}</td>
         <td class="num">${u.needs_review_count}</td>
       `;
       tbody.appendChild(tr);
@@ -341,7 +493,13 @@
         `<strong>${data.n_new}</strong> nouveau(x), ` +
         `<strong>${data.n_reconfirmed}</strong> déjà connu(s), ` +
         `<strong>${data.n_missing_flagged}</strong> disparu(s) signalé(s), ` +
-        `<strong>${data.needs_review_count}</strong> ligne(s) à vérifier.`;
+        `<strong>${data.needs_review_count}</strong> ligne(s) à vérifier.` +
+        `<br>Données du ${escapeHtml(data.periode_debut || "?")} au ${escapeHtml(data.periode_fin || "?")}` +
+        (data.fichier_modifie_le ? ` — fichier modifié le ${escapeHtml(data.fichier_modifie_le)}` : "") + `. ` +
+        `<strong>${data.n_modifications_auto}</strong> correction(s) appliquée(s) automatiquement, ` +
+        `<strong>${data.n_modifications_a_valider}</strong> à valider, ` +
+        `<strong>${data.n_rapprochements_proposes}</strong> rapprochement(s) proposé(s) — voir la section « Rapprochement ».` +
+        (data.avertissement ? `<span class="warn">⚠ ${escapeHtml(data.avertissement)}</span>` : "");
       refreshAll();
     } catch (err) {
       idleView.hidden = false;
@@ -370,6 +528,8 @@
     refreshUploads();
     refreshBanksFilter();
     refreshRecords();
+    refreshExploitants();
+    refreshRapprochement();
     if (currentUser && currentUser.role === "admin") {
       refreshUsers();
       refreshAuditLog();

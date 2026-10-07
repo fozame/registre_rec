@@ -261,6 +261,8 @@ button.btn-secondary { background: #fff; border-color: var(--line); color: var(-
 .status-actif { background: var(--accent-soft); color: var(--accent); }
 .status-a_verifier_disparu { background: var(--warn-soft); color: var(--warn); }
 .status-annule_confirme { background: #eee; color: #666; }
+.status-remplace { background: #eef0f3; color: #5a6b7d; }
+.status-rapproche { background: #e6f4ee; color: #1d7a52; }
 
 /* --- Anomalies --- */
 .anomalies-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -414,3 +416,31 @@ button.btn-secondary { background: #fff; border-color: var(--line); color: var(-
   .two-col { grid-template-columns: 1fr; }
   .admin-grid { grid-template-columns: 1fr; }
 }
+
+/* --- Rapprochement --- */
+.rap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 18px; }
+@media (max-width: 900px) { .rap-grid { grid-template-columns: 1fr; } }
+.rap-h3 { font-size: 14px; margin: 14px 0 10px; display: flex; align-items: center; gap: 8px; }
+.rap-list { max-height: 520px; }
+.rap-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.rap-chip { background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: 4px 12px; font-size: 12px; }
+.rap-chip strong { font-variant-numeric: tabular-nums; }
+.rap-line { font-size: 12.5px; padding: 6px 8px; border-radius: 6px; background: #fafbfc; border: 1px solid var(--line); margin-top: 6px; }
+.rap-line .lbl { font-size: 11px; text-transform: uppercase; color: var(--ink-soft); letter-spacing: .3px; display: block; }
+.rap-line.old { background: #fbf6f2; }
+.rap-line.new { background: #f1f8f4; }
+.rap-nature { font-size: 12.5px; margin-top: 6px; color: var(--ink); }
+.rap-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.rap-actions button { font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+.rap-actions button.ok { border-color: var(--accent); color: var(--accent); }
+.rap-actions button.no { border-color: var(--danger); color: var(--danger); }
+.conf { display: inline-block; padding: 1px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.conf-forte { background: #e3f2ec; color: #1d7a52; }
+.conf-moyenne { background: var(--warn-soft); color: var(--warn); }
+.conf-faible { background: #fbe4e1; color: var(--danger); }
+.conf-validée { background: var(--accent-soft); color: var(--accent); }
+.rap-details { margin-top: 16px; }
+.rap-details summary { cursor: pointer; font-size: 13px; color: var(--ink-soft); }
+.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-soft); }
+.upload-result .warn { display: block; margin-top: 8px; color: var(--warn); }
+a.btn-primary { background: var(--accent); color: #fff; border-radius: 8px; }

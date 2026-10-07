@@ -27,6 +27,8 @@ from datetime import datetime, date
 import openpyxl
 import pandas as pd
 
+from normalisation import classify_operateur  # règle commune (MTN, Orange, Autre)
+
 # ---------------------------------------------------------------------------
 # Normalisation des noms de banque (tolère les fautes de frappe courantes)
 # ---------------------------------------------------------------------------
@@ -107,15 +109,6 @@ def normalize_text(v):
     return re.sub(r"\s+", " ", str(v)).strip()
 
 
-def classify_operateur(raison_sociale):
-    u = raison_sociale.upper()
-    if "ORANGE" in u:
-        return "Orange"
-    if "MTN" in u:
-        return "MTN"
-    return "Autre"
-
-
 def _segment(s, maxlen):
     s = re.sub(r"[^A-Z0-9]+", "-", str(s).upper()).strip("-")
     return s[:maxlen] if s else "X"
@@ -153,6 +146,26 @@ def _pick_sheet(wb, sheet):
                 return name
     # dernier recours : la première feuille du classeur
     return wb.sheetnames[0]
+
+
+def read_file_metadata(path):
+    """Métadonnées internes du classeur Excel (propriétés du document) :
+    date de dernière modification, auteur… Elles permettent de savoir de
+    quand date réellement le fichier, indépendamment de la date d'import,
+    et de repérer un fichier plus ancien importé après un plus récent."""
+    out = {"modifie_le": None, "modifie_par": None, "cree_le": None}
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True)
+        props = wb.properties
+        if props.modified:
+            out["modifie_le"] = props.modified.replace(microsecond=0).isoformat(sep=" ")
+        if props.created:
+            out["cree_le"] = props.created.replace(microsecond=0).isoformat(sep=" ")
+        out["modifie_par"] = props.lastModifiedBy or props.creator
+        wb.close()
+    except Exception:
+        pass
+    return out
 
 
 def parse_file(path, sheet=None):

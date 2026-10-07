@@ -12,7 +12,90 @@ l'autre). Elle permet d'obtenir à tout moment :
 - la répartition par banque ;
 - un panneau "À vérifier" listant les anomalies de saisie et les paiements
   disparus d'un fichier à l'autre (à confirmer avec un motif écrit avant
-  d'être exclus).
+  d'être exclus) ;
+- le suivi des **modifications d'un fichier à l'autre** et le **rapprochement**
+  des paiements sans facture (voir ci-dessous) ;
+- la **BD finale du recouvrement** en Excel, globale ou par exploitant.
+
+## Objectifs du programme
+
+1. **Compiler les BD de recouvrement successives.** Le fichier hebdomadaire de
+   l'autre direction change d'une semaine à l'autre (lignes corrigées, ajoutées,
+   supprimées). L'outil les fusionne dans une base unique sans jamais rien
+   écraser, et **montre ce qui a changé** entre deux fichiers.
+2. **Aider au rapprochement.** Un exploitant a un paiement de 10 000 FCFA sans
+   n° de facture ; la semaine suivante apparaît un paiement de 10 000 FCFA du
+   même exploitant **avec** un n° de facture (et la ligne sans facture a parfois
+   disparu) : l'outil le détecte, le propose, et la décision est enregistrée.
+   Tout cela peut être consulté **par exploitant**.
+3. **Repérer les n° de facture mal attachés** : référence de chèque à la place
+   d'une facture, même facture pour deux exploitants différents, facture répétée,
+   facture changée d'un fichier à l'autre.
+4. **Savoir d'où vient chaque donnée** : pour chaque paiement, le premier et le
+   dernier fichier qui le contiennent, la période couverte par ces fichiers et
+   leur date de modification, et l'historique complet de ses changements.
+5. **Produire à la fin la BD finale du recouvrement**, avec toutes les
+   informations, tous les changements pris en compte et notifiés, pour
+   l'intégrer à votre base.
+
+## Rapprochement et suivi des modifications
+
+### Lignes corrigées d'un fichier à l'autre
+Quand l'autre direction corrige une ligne (ajout du n° de facture, nom du payeur
+précisé — ex. « NI » devenu « SCB », « NTI AKO/REASY » devenu « REASY CAMEROUN
+SARL » —, date ou montant rectifié), l'ancienne version « disparaît » et la
+version corrigée apparaît comme « nouvelle ». L'outil apparie les deux (une
+ancienne version n'est jamais appariée à une ligne qui a figuré dans le même
+fichier qu'elle) :
+
+| Confiance | Règle | Traitement |
+|---|---|---|
+| forte | même date, même exploitant, même montant | appliqué automatiquement |
+| forte | même date, même exploitant, plusieurs nouvelles lignes dont la **somme** = l'ancien montant (paiement ventilé sur plusieurs factures) | appliqué automatiquement |
+| moyenne | même date et même montant, payeur différent | à valider |
+| moyenne | même exploitant et même montant, date différente (≤ 45 j) | à valider |
+| faible | même date et même exploitant, montant différent | à valider |
+
+Ces corrections ne changent pas les totaux (l'ancienne version n'était déjà
+plus comptée) : elles expliquent la disparition et la sortent du panneau
+« À vérifier ». L'ancienne version passe au statut **Remplacé**.
+
+### Rapprochement facture
+Un paiement **sans facture valide** (colonne vide, ou contenant une référence de
+chèque / un texte libre) est rapproché d'un paiement **avec facture** du même
+exploitant et du même montant, daté de 7 jours avant à 120 jours après.
+Deux façons de valider :
+- **Même paiement** : la ligne sans facture devient **Rapproché** et n'est plus
+  comptée (évite le double compte) ;
+- **Rattacher la facture seulement** : les deux lignes restent comptées, la
+  facture est simplement notée sur la ligne sans facture.
+
+Toute décision peut être annulée (section « Décisions déjà prises »).
+
+### Regroupement des exploitants
+Les orthographes d'un même exploitant sont regroupées pour comparer et filtrer
+(« MATRIX TELECOM » / « MATRIX TELECOMS », « CONSULT - IT CAMEROUN » /
+« CONSULT IT CAMEROUN SARL »…) en ignorant ponctuation, accents, pluriels et
+formes juridiques (SARL, SA, ETS, CAMEROUN…). Le nom saisi est toujours conservé.
+« MOBILE TELEPHONE NETWORKS » (toutes variantes) = **MTN**. Attention :
+« AFRICA MOBILE NETWORKS » est un autre opérateur. Les règles sont dans
+`normalisation.py` (liste `_ALIASES` à compléter au besoin). Les payeurs « NI »
+(non identifiés) ne sont jamais rapprochés entre eux par le nom.
+
+### Ordre des imports — important
+L'outil considère que chaque fichier importé est **plus récent** que le
+précédent. Importer un fichier plus ancien après un plus récent fait apparaître
+à tort des paiements « disparus ». L'outil enregistre désormais la **date de
+modification interne** de chaque fichier Excel et la **période réellement
+couverte** par ses données, et affiche un avertissement si le fichier semble
+plus ancien que le dernier importé (ou déjà importé). Dans ce cas, réimportez
+ensuite le fichier le plus récent : l'état correct est rétabli.
+
+### La BD finale (bouton « Exporter la BD finale »)
+Classeur Excel, pour tous les exploitants ou pour celui sélectionné :
+Lisez-moi · BD finale (tous les paiements, statut, compté ou non, facture
+retenue, fichiers sources, historique) · Sans facture · Rapprochements ·
+Modifications · Factures suspectes · Par exploitant · Imports · Historique.
 
 Toute la logique d'analyse est en Python, côté serveur, dans `parser.py`. Le
 navigateur ne fait qu'afficher les résultats et envoyer les fichiers — il n'y a
@@ -467,8 +550,10 @@ recouvrement_app/
   app.py                      serveur Flask (routes web + API + authentification)
   auth.py                     comptes utilisateurs et rôles (admin / user)
   parser.py                   lecture et fiabilisation des fichiers Excel (logique métier)
-  storage.py                  base cumulative (SQLite) : fusion, statuts, requêtes, audit
-  xlsx_export.py               génération des exports Excel (.xlsx) à la volée
+  normalisation.py            règles communes : exploitants, MTN/Orange, format des factures
+  rapprochement.py            détection des modifications, rapprochements, factures suspectes
+  storage.py                  base cumulative (SQLite) : fusion, statuts, historique, décisions, audit
+  xlsx_export.py              génération des exports Excel (.xlsx), dont la BD finale
   requirements.txt            dépendances Python
   Dockerfile                  image Docker (déploiement alternatif — voir "Déploiement avec Docker")
   docker-compose.yml          configuration du conteneur (port, volume de données)
